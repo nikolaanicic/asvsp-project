@@ -20,8 +20,6 @@ Batch processing (10 complex queries using window functions) and stream processi
 
 ## 🏛️ Architecture
 
-![Architecture Diagram](diagram.png) *(create your own diagram, e.g., using draw.io)*
-
 **Components:**
 - **HDFS** – Hadoop Distributed File System (data lake).
 - **Apache Spark** – batch and stream processing.
