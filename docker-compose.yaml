@@ -92,15 +92,28 @@ services:
       - ./mongo/init.js:/docker-entrypoint-initdb.d/init.js:ro
 
   hue:
-    image: gethue/hue:latest
+    image: gethue/hue:4.11.0
     container_name: hue
     ports:
       - "8888:8888"
     volumes:
-      - ./hue/conf.dist:/usr/share/hue/desktop/conf
+      - ./hue/conf.dist:/usr/share/hue/desktop/conf:ro  # Mount as read-only
+      - ./hue/scripts:/usr/share/hue/scripts:ro
+      - ./hue/tmp:/tmp/hue:rw  # Writable temp directory
+      - ./hue/data:/usr/share/hue/desktop:rw  # Writable data directory
+      - ./hue/logs:/usr/share/hue/logs:rw  # Writable logs directory
+    environment:
+      - TMPDIR=/tmp/hue
+      - PYTHONUNBUFFERED=1
+      - HOME=/tmp/hue
+      - DJANGO_SETTINGS_MODULE=desktop.settings
     depends_on:
       - namenode
-      - mongo
+    command: /usr/share/hue/scripts/startup.sh
+    restart: "no"
+    user: "0:0"  # Run as root temporarily to avoid permission issues
+    stdin_open: true
+    tty: true
 
   metabase:
     image: metabase/metabase:v0.47.0
@@ -141,47 +154,38 @@ services:
       - FOOTBALL_API_KEY=${FOOTBALL_API_KEY}
     restart: always
 
-  airflow-webserver:
-    image: apache/airflow:2.7.1-python3.10
-    container_name: airflow-webserver
-    restart: always
+  airflow:
+    image: docker-airflow:latest
+    container_name: airflow
+    user: root
     depends_on:
+      - spark-master
       - airflow-postgres
     environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - LOAD_EX=n
+      - EXECUTOR=Local
+      - FERNET_KEY=wKU4DB8b8jfpqIqcTSGSyR6dWtCtF16PUVAOlviItYw=
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
     volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./spark:/opt/spark
-      - ./spark/jars:/opt/spark/jars
+      - ./airflow/:/opt/airflow/
+      - ./airflow/dags:/root/airflow/dags # DAG folder
+      - ./spark/jobs:/home/scripts # Spark Scripts (Must be the same path in airflow and Spark Cluster)
+      - ./spark/resources:/usr/local/spark/resources # Resources folder (Must be the same path in airflow and Spark Cluster)
     ports:
-      - "8082:8080"
+      - "8282:8080"
     command: webserver
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      test: ["CMD-SHELL", "[ -f /usr/local/airflow/airflow-webserver.pid ]"]
       interval: 30s
-      timeout: 10s
-      retries: 5
-
-  airflow-scheduler:
-    image: apache/airflow:2.7.1-python3.10
-    container_name: airflow-scheduler
-    restart: always
-    depends_on:
-      - airflow-webserver
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-    volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./spark:/opt/spark
-      - ./spark/jars:/opt/spark/jars
-    command: scheduler
+      timeout: 30s
+      retries: 3
 
   airflow-postgres:
-    image: postgres:14
+    image: postgres:11
     container_name: airflow-postgres
     environment:
       - POSTGRES_USER=airflow
