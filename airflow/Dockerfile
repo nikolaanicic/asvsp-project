@@ -5,7 +5,7 @@
 # BASED ON: https://github.com/puckel/docker-airflow
 
 # stretch debian version allows JAVA JDK 8
-FROM python:3.6-stretch
+FROM python:3.10-bookworm
 LABEL maintainer="cordon-thiago"
 
 # Never prompts the user for choices on installation/configuration of packages
@@ -16,17 +16,44 @@ RUN echo 'Acquire::Check-Valid-Until "false";' \
      > /etc/apt/apt.conf.d/99no-check-valid-until
  
 # — rewrite sources to archive.debian.org
-RUN sed -i \
-      -e 's|http://deb.debian.org/debian|http://archive.debian.org/debian|g' \
-      -e 's|http://security.debian.org/debian-security|http://archive.debian.org/debian-security|g' \
-      -e '/stretch-updates/d' \
-      /etc/apt/sources.list
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpq-dev libpq5 \
     && ldconfig \
     && rm -rf /var/lib/apt/lists/*
 
+
+RUN set -ex \
+    && buildDeps=' \
+        freetds-dev \
+        libkrb5-dev \
+        libsasl2-dev \
+        libssl-dev \
+        libffi-dev \
+        git \
+    ' \
+    && apt-get update -yqq \
+    && apt-get upgrade -yqq \
+    && apt-get install -yqq --no-install-recommends \
+        $buildDeps \
+        freetds-bin \
+        build-essential \
+        default-libmysqlclient-dev \
+        apt-utils \
+        curl \
+        cmake
+RUN git clone https://github.com/abseil/abseil-cpp.git /tmp/abseil-cpp && \
+    cd /tmp/abseil-cpp && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+          -DCMAKE_CXX_STANDARD=17 \
+          -DABSL_BUILD_TESTING=OFF \
+          -DABSL_USE_GOOGLETEST_HEAD=OFF \
+          -DCMAKE_INSTALL_PREFIX=/usr \
+          .. && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /tmp/abseil-cpp    
 
 ENV TERM linux
 
@@ -67,14 +94,19 @@ RUN set -ex \
         apt-utils \
         curl \
         rsync \
-        netcat \
         locales \
         iputils-ping \
         telnet \
+        wget \
+        cmake \
+        libre2-dev \
+        pybind11-dev \
+        pkg-config \
     && sed -i 's/^# en_US.UTF-8 UTF-8$/en_US.UTF-8 UTF-8/g' /etc/locale.gen \
     && locale-gen \
     && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
     && useradd -ms /bin/bash -d ${AIRFLOW_HOME} airflow \
+    && pip install --upgrade pip \
     && pip install -U pip setuptools wheel \
     && pip install pytz \
     #
@@ -83,8 +115,7 @@ RUN set -ex \
     && pip install pyOpenSSL \
     && pip install ndg-httpsclient \
     && pip install pyasn1 \
-    && pip install -r requirements.txt \
-    && pip install --use-feature=2020-resolver apache-airflow[crypto,celery,postgres,hive,jdbc,mysql,ssh${AIRFLOW_DEPS:+,}${AIRFLOW_DEPS}]==${AIRFLOW_VERSION} \
+    && pip install --no-cache-dir -r requirements.txt \
     && pip install 'redis>=2.10.5,<3' \
     && if [ -n "${PYTHON_DEPS}" ]; then pip install ${PYTHON_DEPS}; fi \
     && apt-get purge --auto-remove -yqq $buildDeps \
@@ -104,13 +135,16 @@ RUN set -ex \
 ###############################
 # Java is required in order to spark-submit work
 # Install OpenJDK‑8 headless (from archive.debian.org)
-RUN apt-get update \
- && apt-get install -y --no-install-recommends openjdk-8-jdk-headless \
- && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y wget tar \
+    && wget https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u372-b07/OpenJDK8U-jdk_x64_linux_hotspot_8u372b07.tar.gz \
+    && tar -xzf OpenJDK8U-jdk_x64_linux_hotspot_8u372b07.tar.gz -C /opt/ \
+    && rm OpenJDK8U-jdk_x64_linux_hotspot_8u372b07.tar.gz \
+    && ln -s /opt/jdk8u372-b07 /opt/java-8
 
-# Setup JAVA_HOME 
-ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64
+# Setup JAVA_HOME
+ENV JAVA_HOME=/opt/java-8
 RUN export JAVA_HOME
+RUN export PATH=$JAVA_HOME/bin:$PATH
 ###############################
 ## Finish JAVA installation
 ###############################

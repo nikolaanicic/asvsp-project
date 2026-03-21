@@ -14,6 +14,8 @@ services:
       - CLUSTER_NAME=test
     env_file:
       - ./hadoop/hadoop.env
+    networks:
+      - ftb_network
 
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
@@ -25,6 +27,8 @@ services:
       SERVICE_PRECONDITION: "namenode:9870"
     env_file:
       - ./hadoop/hadoop.env
+    networks:
+      - ftb_network
 
   resourcemanager:
     image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
@@ -34,6 +38,8 @@ services:
       SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864"
     env_file:
       - ./hadoop/hadoop.env
+    networks:
+      - ftb_network
 
   nodemanager:
     image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
@@ -43,6 +49,8 @@ services:
       SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
     env_file:
       - ./hadoop/hadoop.env
+    networks:
+      - ftb_network
 
   historyserver:
     image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
@@ -54,9 +62,11 @@ services:
       - hadoop_historyserver:/hadoop/yarn/timeline
     env_file:
       - ./hadoop/hadoop.env
+    networks:
+      - ftb_network
 
   spark-master:
-    image: bde2020/spark-master:3.3.0-hadoop3.3
+    image: bde2020/spark-master:3.0.1-hadoop3.2
     container_name: spark-master
     ports:
       - "8080:8080"
@@ -65,11 +75,11 @@ services:
       - INIT_DAEMON_STEP=setup_spark
     volumes:
       - ./spark/jobs:/opt/spark/jobs
-      - ./spark/utils:/opt/spark/utils
-      - ./spark/jars:/opt/spark/jars   # for MongoDB connector
+    networks:
+      - ftb_network
 
   spark-worker:
-    image: bde2020/spark-worker:3.3.0-hadoop3.3
+    image: bde2020/spark-worker:3.0.1-hadoop3.2
     container_name: spark-worker
     depends_on:
       - spark-master
@@ -77,19 +87,33 @@ services:
       - "8081:8081"
     environment:
       - "SPARK_MASTER=spark://spark-master:7077"
-    volumes:
-      - ./spark/jobs:/opt/spark/jobs
-      - ./spark/utils:/opt/spark/utils
-      - ./spark/jars:/opt/spark/jars
+    env_file:
+      - ./spark/spark.env
+    networks:
+      - ftb_network
 
-  mongo:
-    image: mongo:6.0
-    container_name: mongo
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    restart: always
     ports:
       - "27017:27017"
     volumes:
-      - mongo_data:/data/db
-      - ./mongo/init.js:/docker-entrypoint-initdb.d/init.js:ro
+      - mongodb_data:/data/db
+    networks:
+      - ftb_network
+
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    depends_on:
+      - mongodb
+    ports:
+      - "8083:8081"
+    env_file:
+      - ./mongo/mongo.env    
+    networks:
+      - ftb_network
 
   hue:
     image: gethue/hue:4.11.0
@@ -114,6 +138,8 @@ services:
     user: "0:0"  # Run as root temporarily to avoid permission issues
     stdin_open: true
     tty: true
+    networks:
+      - ftb_network
 
   metabase:
     image: metabase/metabase:v0.47.0
@@ -121,7 +147,9 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - mongo
+      - mongodb
+    networks:
+      - ftb_network
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.3.0
@@ -131,6 +159,8 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+    networks:
+      - ftb_network
 
   kafka:
     image: confluentinc/cp-kafka:7.3.0
@@ -144,6 +174,8 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - ftb_network
 
   kafka-producer:
     build: ./kafka/producer
@@ -153,6 +185,8 @@ services:
     environment:
       - FOOTBALL_API_KEY=${FOOTBALL_API_KEY}
     restart: always
+    networks:
+      - ftb_network
 
   airflow:
     image: docker-airflow:latest
@@ -166,6 +200,8 @@ services:
       - EXECUTOR=Local
       - FERNET_KEY=wKU4DB8b8jfpqIqcTSGSyR6dWtCtF16PUVAOlviItYw=
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - JAVA_HOME=/opt/java-8
+      - PATH=/opt/java-8/bin:$PATH
     logging:
       options:
         max-size: 10m
@@ -175,6 +211,8 @@ services:
       - ./airflow/dags:/root/airflow/dags # DAG folder
       - ./spark/jobs:/home/scripts # Spark Scripts (Must be the same path in airflow and Spark Cluster)
       - ./spark/resources:/usr/local/spark/resources # Resources folder (Must be the same path in airflow and Spark Cluster)
+      - ./spark/utils:/home/utils
+      - ./spark/jars:/opt/spark/jars
     ports:
       - "8282:8080"
     command: webserver
@@ -183,6 +221,8 @@ services:
       interval: 30s
       timeout: 30s
       retries: 3
+    networks:
+      - ftb_network
 
   airflow-postgres:
     image: postgres:11
@@ -191,12 +231,18 @@ services:
       - POSTGRES_USER=airflow
       - POSTGRES_PASSWORD=airflow
       - POSTGRES_DB=airflow
+      - POSTGRES_PORT=5432
     volumes:
       - airflow_postgres:/var/lib/postgresql/data
+    networks:
+      - ftb_network
 
 volumes:
   hadoop_namenode:
   hadoop_datanode:
   hadoop_historyserver:
-  mongo_data:
+  mongodb_data:
   airflow_postgres:
+
+networks:
+  ftb_network:
