@@ -21,15 +21,14 @@ default_args = {
 
 tasks = {}
 task_ids = []
-# scripts = [f"query_{i}.py" for i in range(10)]
-scripts = ["query_0.py"]
+scripts = ["query_6.py"]
 
 with DAG(
-    'statsbomb_batch',
+    'statsbomb_query_6',
     default_args=default_args,
-    description='Daily StatsBomb batch processing',
-    schedule_interval='0 2 * * *',
+    description='Query 6 processing',
     catchup=False,
+    schedule_interval=None,
 ) as dag:
 
     os.environ["MAVEN_OPTS"] = "-Dmaven.wagon.http.timeout=600000 -Dmaven.wagon.httpconnectionManager.ttlSeconds=600"
@@ -40,12 +39,7 @@ with DAG(
         task_ids.append(task_id)
         tasks[task_id] = BashOperator(
             task_id=task_id,
-            bash_command=(
-                "spark-submit " \
-                "--master spark://spark-master:7077 " \
-                "--jars $(echo /opt/spark/jars/*.jar | tr ' ' ',') " \
-                f"{pyspark_app_home}/{script}"
-            ),
+            bash_command=f"spark-submit --master spark://spark-master:7077 --jars $(echo /opt/spark/jars/*.jar | tr ' ' ',') {pyspark_app_home}/{script}",
             env={
                 "JAVA_HOME": "/opt/java-8",
                 "SPARK_HOME": "/usr/local/spark",  # full path to Spark installation

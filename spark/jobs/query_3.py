@@ -1,18 +1,27 @@
 # -*- coding: utf-8 -*-
+import os
+
 from pyspark.sql import SparkSession
 from pyspark.sql.window import Window
-from pyspark.sql.functions import lag, col
+from pyspark.sql.functions import input_file_name, regexp_extract, lag
 import flatten_utils
+
+MONGO_URI = os.environ['MONGO_URI']
+MONGO_DATABASE = "statsbomb"
+MONGO_COLLECTION = "dribbles_with_lag"
 
 spark = SparkSession.builder \
     .appName("StatsBomb Query 3 - Dribbles with LAG") \
-    .config("spark.mongodb.output.uri", "mongodb://mongo:27017/statsbomb.results") \
+    .config("spark.mongodb.connection.uri", MONGO_URI) \
+    .config("spark.mongodb.database", MONGO_DATABASE) \
+    .config("spark.mongodb.collection", MONGO_COLLECTION) \
     .getOrCreate()
 
-events_df = spark.read.json("hdfs://namenode:9000/raw/statsbomb/events/*.json")
-matches_df = spark.read.json("hdfs://namenode:9000/raw/statsbomb/matches/*/*.json")
+events_df = spark.read.json("hdfs://namenode:9000/raw/statsbomb/events/*.json", multiLine=True)
+events_df = events_df.withColumn("match_id", regexp_extract(input_file_name(), r"(\d+)\.json$", 1))
+matches_df = spark.read.json("hdfs://namenode:9000/raw/statsbomb/matches/*/*.json", multiLine=True)
 
-events_flat = flatten_utils.base_events(events_df)
+events_flat = flatten_utils.events_with_match_id(events_df)
 matches_flat = flatten_utils.flatten_matches(matches_df)
 
 events_flat.createOrReplaceTempView("events")
@@ -31,9 +40,11 @@ result = dribbles_per_season.withColumn(
     "prev_season_dribbles", lag("dribbles", 1).over(window_lag)
 ).select("player_name", "season_id", "dribbles", "prev_season_dribbles")
 
-result.write.format("mongo") \
+result.write.format("mongodb") \
     .mode("overwrite") \
-    .option("collection", "dribbles_with_lag") \
+    .option("spark.mongodb.connection.uri", MONGO_URI) \
+    .option("spark.mongodb.database", MONGO_DATABASE) \
+    .option("spark.mongodb.collection", MONGO_COLLECTION) \
     .save()
 
 spark.stop()
